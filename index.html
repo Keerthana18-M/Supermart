@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python SuperMart</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #eef2f5;
+            padding: 20px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Card Styles */
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th {
+            background: #3498db;
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .total {
+            text-align: right;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-top: 20px;
+            color: #2c3e50;
+        }
+
+        /* --- POPUP MODAL STYLES --- */
+        .modal-overlay {
+            display: none;
+            /* Hidden by default */
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            /* Dim the background */
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 15% auto;
+            /* 15% from the top and centered */
+            padding: 30px;
+            border: 5px solid #e74c3c;
+            /* Red Border */
+            width: 80%;
+            max-width: 500px;
+            text-align: center;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            animation: shake 0.5s;
+            /* Shake animation */
+        }
+
+        .modal-icon {
+            font-size: 60px;
+            color: #e74c3c;
+            margin-bottom: 10px;
+        }
+
+        .modal-title {
+            color: #c0392b;
+            font-size: 2em;
+            font-weight: bold;
+            margin: 0;
+        }
+
+        .modal-text {
+            font-size: 1.2em;
+            margin: 20px 0;
+            color: #333;
+        }
+
+        .btn-close {
+            background-color: #e74c3c;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-close:hover {
+            background-color: #c0392b;
+        }
+
+        /* Animation for the popup */
+        @keyframes shake {
+            0% {
+                transform: translate(1px, 1px) rotate(0deg);
+            }
+
+            10% {
+                transform: translate(-1px, -2px) rotate(-1deg);
+            }
+
+            20% {
+                transform: translate(-3px, 0px) rotate(1deg);
+            }
+
+            30% {
+                transform: translate(3px, 2px) rotate(0deg);
+            }
+
+            40% {
+                transform: translate(1px, -1px) rotate(1deg);
+            }
+
+            50% {
+                transform: translate(-1px, 2px) rotate(-1deg);
+            }
+
+            60% {
+                transform: translate(-3px, 1px) rotate(0deg);
+            }
+
+            100% {
+                transform: translate(0, 0) rotate(0deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="card">
+            <h2>Scan Item</h2>
+            <div id="reader" style="width: 100%;"></div>
+            <p style="text-align:center; color:#777; margin-top:10px;">Point camera at barcode</p>
+        </div>
+
+        <div class="card">
+            <h2>Shopping Cart</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Batch</th>
+                        <th>Expiry</th>
+                        <th>Price</th>
+                    </tr>
+                </thead>
+                <tbody id="cart-body">
+                </tbody>
+            </table>
+            <div class="total">Total: ₹<span id="total-price">0.00</span></div>
+        </div>
+    </div>
+
+    <div id="error-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-icon">⚠️</div>
+            <h1 class="modal-title">STOP!</h1>
+            <p id="modal-message" class="modal-text">Product Expired</p>
+            <button class="btn-close" onclick="closeModal()">ACKNOWLEDGE</button>
+        </div>
+    </div>
+
+    <audio id="beep-sound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+
+    <script>
+        let isScanning = true;
+        const beep = document.getElementById("beep-sound");
+
+        async function onScanSuccess(decodedText) {
+            if (!isScanning) return;
+
+            isScanning = false; // LOCK SCANNER immediately
+
+            try {
+                const response = await fetch('/process_scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: decodedText })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    // Success: Add to cart and resume scanning automatically
+                    addToCart(result.product);
+
+                    // Small delay before next scan to prevent double-read
+                    setTimeout(() => { isScanning = true; }, 1500);
+
+                } else {
+                    // ERROR / EXPIRED: Show the STOP popup
+                    showModal(result.message);
+                    // Note: We do NOT set isScanning = true here. 
+                    // We wait for the user to click the button.
+                }
+
+            } catch (err) {
+                console.error(err);
+                showModal("Server Connection Error");
+            }
+        }
+
+        function addToCart(item) {
+            const tbody = document.getElementById('cart-body');
+            const row = `
+            <tr>
+                <td>${item.name}<br><small style="color:#777">${item.gtin}</small></td>
+                <td>${item.batch}</td>
+                <td>${item.expiry}</td>
+                <td class="price">${item.price.toFixed(2)}</td>
+            </tr>
+        `;
+            tbody.innerHTML += row;
+            updateTotal();
+        }
+
+        function updateTotal() {
+            let total = 0;
+            document.querySelectorAll('.price').forEach(td => {
+                total += parseFloat(td.innerText);
+            });
+            document.getElementById('total-price').innerText = total.toFixed(2);
+        }
+
+        // --- MODAL FUNCTIONS ---
+        function showModal(message) {
+            const modal = document.getElementById('error-modal');
+            const msgText = document.getElementById('modal-message');
+
+            msgText.innerText = message;
+            modal.style.display = "block"; // Show the modal
+
+            // Play Alert Sound
+            beep.play().catch(e => console.log("Audio play failed (user interaction needed first)"));
+        }
+
+        function closeModal() {
+            document.getElementById('error-modal').style.display = "none";
+            // ONLY resume scanning after the user acknowledges the error
+            isScanning = true;
+        }
+
+        // Initialize Scanner
+        const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
+        html5QrcodeScanner.render(onScanSuccess);
+    </script>
+
+</body>
+
+</html>
